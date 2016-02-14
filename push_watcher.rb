@@ -1,107 +1,79 @@
 require 'sinatra/base'
 require 'json'
 require 'set'
-require 'fileutils'
-require 'httparty'
+require './theme_uploader'
 
 SECRETS_JSON = JSON.parse(File.read('secrets.json'))
-GITHUB_SECRET = SECRETS_JSON['github_secret_token']
 HMAC_DIGEST = OpenSSL::Digest.new('sha1')
 
-THEME_DIRS = %w(layout templates snippets assets config locales sections blocks)
-
-THEMES_GIT_DIR = 'themes'
-
-Dir.mkdir(THEMES_GIT_DIR) unless Dir.exists?(THEMES_GIT_DIR)
-
 class PushWatcher < Sinatra::Base
-  # set :bind, '0.0.0.0'
-  # set :port, 3876
-
   attr_reader :request_body
+  attr_reader :json
+  attr_reader :repo_credentials
+
+  configure :production, :development do
+    enable :logging
+  end
 
   before do
     @request_body = request.body.read
+    message = "#{request.request_method} to #{request.path}"
+    begin
+      @json = JSON.parse(request_body)
+      logger.info message + " with \n#{JSON.pretty_generate(@json)}"
+    rescue JSON::ParserError
+      log_error_and_halt message + " with bad json: %p" % request_body
+    ensure
+
+    end
   end
 
   before do
-    signature = 'sha1=' + OpenSSL::HMAC.hexdigest(HMAC_DIGEST, GITHUB_SECRET, request_body)
-    halt 500, "Signatures didn't match!" unless Rack::Utils.secure_compare(signature, request.env['HTTP_X_HUB_SIGNATURE'])
+    repository = json['repository']
+    unless repository
+      log_error_and_halt "repository missing from request"
+    end
+
+    repo_full_name = repository['full_name']
+    unless @repo_credentials = SECRETS_JSON['themes'][repo_full_name]
+      log_error_and_halt "No credentials configured for repo #{repo_full_name}"
+    end
+  end
+
+  before do
+    unless header_sig = request.env['HTTP_X_HUB_SIGNATURE']
+      log_error_and_halt "Missing signature"
+    end
+
+    signature = 'sha1=' + OpenSSL::HMAC.hexdigest(HMAC_DIGEST, repo_credentials["github_secret_token"], request_body)
+    unless Rack::Utils.secure_compare(signature, header_sig)
+      logger.warn "Signatures don't match. Header '#{request.env['HTTP_X_HUB_SIGNATURE']}' computed '#{signature}'"
+      halt 400, "Signatures didn't match!"
+    end
   end
 
   post '/push' do
-    json_body = JSON.parse(request_body)
-    return unless json_body["ref"] == "refs/heads/master"
-    upload_theme_changes(json_body)
+    unless master_branch?
+      logger.info "Push to non-master branches ignored (found #{json['ref']})"
+      return 200
+    end
+    upload_theme_changes
   end
 
   private
 
-  def upload_theme_changes(json_body)
-    repo_credentials = SECRETS_JSON['themes'][json_body['repository']['full_name']]
-    return 404 unless repo_credentials
-    commits = json_body['commits']
-    return unless commits.is_a?(Array) && !commits.empty?
-
-    changeset = compute_changeset(commits)
-    return if changeset[:changed].empty? && changeset[:removed].empty?
-    puts changeset
-    return 400 unless update_git_dir(json_body)
-
-    repo_dir = File.join(THEMES_GIT_DIR, json_body['repository']['full_name'])
-    url = "https://#{repo_credentials['shopify_domain']}/admin/themes/#{repo_credentials['theme_id']}/assets.json"
-    options = {
-      basic_auth: {
-        username: repo_credentials['shopify_credentials']['api_key'],
-        password: repo_credentials['shopify_credentials']['password']
-      }
-    }
-
-    changeset[:changed].each do |changed_file|
-      contents = File.read(File.join(repo_dir, changed_file))
-      HTTParty.put(url, options.merge({body: {asset: {key: changed_file, value: contents}}}))
-    end
-
-    changeset[:removed].each do |changed_file|
-      HTTParty.delete(url, options.merge({body: {asset: {key: changed_file}}}))
-    end
+  def log_error_and_halt(message, status: 400)
+    logger.error message
+    halt status, message
   end
 
-  def compute_changeset(commits)
-    changed = Set.new
-    removed = Set.new
+  def master_branch?
+    json['ref'] == "refs/heads/master"
+  end
 
-    commits.each do |commit|
-      (commit["added"] + commit["modified"]).each do |file|
-        next unless theme_file?(file)
-        changed.add(file)
-        removed.delete(file)
-      end
-
-      commit['removed'].each do |file|
-        next unless theme_file?(file)
-        removed.add(file)
-        changed.delete(file)
-      end
+  def upload_theme_changes
+    Thread.new(repo_credentials, json, logger) do |*args|
+      ThemeUploader.new(*args).process_commits
     end
-
-    {changed: changed.to_a, removed: removed.to_a}
   end
-
-  def theme_file?(file)
-    THEME_DIRS.include?(File.dirname(file))
-  end
-
-  def update_git_dir(json_body)
-    repository = json_body['repository']
-    repo_dir = File.join(THEMES_GIT_DIR, repository['full_name'])
-    unless Dir.exists?(File.join(repo_dir, '.git'))
-      system("git clone #{repository['clone_url']} #{repo_dir}")
-    end
-
-    # returns true if successful
-    system("git -C #{repo_dir} fetch && git -C #{repo_dir} reset --hard #{json_body['after']}")
-  end
-
-  # run! if app_file == $0
 end
