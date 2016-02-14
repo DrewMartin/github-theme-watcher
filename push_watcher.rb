@@ -5,6 +5,10 @@ require './theme_uploader'
 
 HMAC_DIGEST = OpenSSL::Digest.new('sha1')
 
+REQUIRED_ENV_SUFFIXES = [:theme_id, :shopify_domain, :shopify_api_key, :shopify_password]
+OPTIONAL_ENV_SUFFIXES = [:github_secret_token, :git_auth_token]
+ENV_SUFFIXES = REQUIRED_ENV_SUFFIXES + OPTIONAL_ENV_SUFFIXES
+
 class PushWatcher < Sinatra::Base
   attr_reader :request_body
   attr_reader :json
@@ -66,12 +70,13 @@ class PushWatcher < Sinatra::Base
     repo_name = repo_name.gsub("/", "__").gsub(/\W/, '_')
     missing_env = []
     credentials = {}
-    [:github_secret_token, :theme_id, :shopify_domain, :shopify_api_key, :shopify_password].each do |key|
+
+    ENV_SUFFIXES.each do |key|
       full_key = "#{repo_name}__#{key}"
       if ENV.has_key?(full_key)
         credentials[key] = ENV[full_key]
-      else
-        missing_env << full_key if key != :github_secret_token
+      elsif REQUIRED_ENV_SUFFIXES.include?(key)
+        missing_env << full_key
       end
     end
 

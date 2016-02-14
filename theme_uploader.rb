@@ -83,7 +83,7 @@ class ThemeUploader
 
   def update_git_dir
     unless Dir.exists?(repository_dir)
-      return unless exec_and_log("git clone #{repository_info['clone_url']} #{repository_dir}")
+      return unless exec_and_log("git clone #{clone_url} #{repository_dir}")
     end
 
     exec_and_log("git -C #{repository_dir} fetch") &&
@@ -100,6 +100,17 @@ class ThemeUploader
       logger.error "Error running command #{command}: #{stdout_err}"
     end
     status.success?
+  end
+
+  def clone_url
+    base_url = repository_info['clone_url']
+    if credentials[:git_auth_token]
+      uri = URI(base_url)
+      uri.user = credentials[:git_auth_token]
+      uri.to_s
+    else
+      base_url
+    end
   end
 
   def theme_asset?(file)
