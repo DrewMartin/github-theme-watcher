@@ -17,3 +17,5 @@ secrets.json
 /log/*
 !/log/.keep
 /tmp
+
+.env

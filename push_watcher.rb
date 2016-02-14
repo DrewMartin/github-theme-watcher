@@ -3,7 +3,6 @@ require 'json'
 require 'set'
 require './theme_uploader'
 
-SECRETS_JSON = JSON.parse(File.read('secrets.json'))
 HMAC_DIGEST = OpenSSL::Digest.new('sha1')
 
 class PushWatcher < Sinatra::Base
@@ -35,7 +34,7 @@ class PushWatcher < Sinatra::Base
     end
 
     repo_full_name = repository['full_name']
-    unless @repo_credentials = SECRETS_JSON['themes'][repo_full_name]
+    unless @repo_credentials = read_credentials(repo_full_name)
       log_error_and_halt "No credentials configured for repo #{repo_full_name}"
     end
   end
@@ -45,7 +44,7 @@ class PushWatcher < Sinatra::Base
       log_error_and_halt "Missing signature"
     end
 
-    signature = 'sha1=' + OpenSSL::HMAC.hexdigest(HMAC_DIGEST, repo_credentials["github_secret_token"], request_body)
+    signature = 'sha1=' + OpenSSL::HMAC.hexdigest(HMAC_DIGEST, repo_credentials[:github_secret_token], request_body)
     unless Rack::Utils.secure_compare(signature, header_sig)
       logger.warn "Signatures don't match. Header '#{request.env['HTTP_X_HUB_SIGNATURE']}' computed '#{signature}'"
       halt 400, "Signatures didn't match!"
@@ -61,6 +60,26 @@ class PushWatcher < Sinatra::Base
   end
 
   private
+
+  def read_credentials(repo_name)
+    repo_name = repo_name.gsub("/", "__")
+    missing_env = []
+    credentials = {}
+    [:github_secret_token, :theme_id, :shopify_domain, :shopify_api_key, :shopify_password].each do |key|
+      full_key = "#{repo_name}__#{key}"
+      if ENV.has_key?(full_key)
+        credentials[key] = ENV[full_key]
+      else
+        missing_env << full_key
+      end
+    end
+
+    if missing_env.empty?
+      return credentials
+    else
+      log_error_and_halt "Missing environment keys: #{missing_env.join(', ')}", status: 500
+    end
+  end
 
   def log_error_and_halt(message, status: 400)
     logger.error message

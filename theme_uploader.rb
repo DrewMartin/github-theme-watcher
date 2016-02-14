@@ -28,12 +28,11 @@ class ThemeUploader
   private
 
   def upload_theme_changes
-    debugger
-    url = "https://#{credentials['shopify_domain']}/admin/themes/#{theme_id}/assets.json"
+    url = "https://#{credentials[:shopify_domain]}/admin/themes/#{theme_id}/assets.json"
     options = {
       basic_auth: {
-        username: credentials['shopify_credentials']['api_key'],
-        password: credentials['shopify_credentials']['password']
+        username: credentials[:shopify_api_key],
+        password: credentials[:shopify_password]
       }
     }
 
@@ -120,7 +119,7 @@ class ThemeUploader
   end
 
   def theme_id
-    @theme_id ||= credentials['theme_id']
+    @theme_id ||= credentials[:theme_id]
   end
 
   def no_commits?
