@@ -62,7 +62,7 @@ class PushWatcher < Sinatra::Base
   private
 
   def read_credentials(repo_name)
-    repo_name = repo_name.gsub("/", "__")
+    repo_name = repo_name.gsub("/", "__").gsub(/\W/, '_')
     missing_env = []
     credentials = {}
     [:github_secret_token, :theme_id, :shopify_domain, :shopify_api_key, :shopify_password].each do |key|
