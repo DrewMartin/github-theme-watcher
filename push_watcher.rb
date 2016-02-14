@@ -40,6 +40,7 @@ class PushWatcher < Sinatra::Base
   end
 
   before do
+    return unless repo_credentials[:github_secret_token]
     unless header_sig = request.env['HTTP_X_HUB_SIGNATURE']
       log_error_and_halt "Missing signature"
     end
@@ -70,7 +71,7 @@ class PushWatcher < Sinatra::Base
       if ENV.has_key?(full_key)
         credentials[key] = ENV[full_key]
       else
-        missing_env << full_key
+        missing_env << full_key if key != :github_secret_token
       end
     end
 
